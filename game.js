@@ -26,6 +26,10 @@ const STORM_START_R = 1300;         // covers the whole map at the start
 const STORM_MIN_R = 150;            // final tiny safe zone
 const STORM_DAMAGE_INTERVAL = 2500; // lose 1 life per this many ms outside the zone
 
+// Pre-round map voting
+const VOTE_DURATION = 12000;   // ms players have to vote
+const VOTE_CANDIDATES = 3;     // number of maps offered each vote
+
 const CHAR_NAMES = ['Greenie', 'Shadow', 'Goldie', 'Blue', 'Red'];
 
 // ===================== IMAGES =====================
@@ -83,6 +87,53 @@ const MAPS = [
     {x:880,y:380,w:240,h:20},{x:880,y:1100,w:240,h:20}],
     spawns:[{x:100,y:100},{x:1900,y:100},{x:100,y:1400},{x:1900,y:1400},
             {x:1000,y:120},{x:1000,y:1380},{x:120,y:750},{x:1880,y:750}]},
+  { name:'Maze', bg:'#241e2d', wall:'#5d4a78', border:'#3d2f55', walls:[
+    {x:200,y:300,w:400,h:24},{x:800,y:300,w:400,h:24},{x:1400,y:300,w:400,h:24},
+    {x:200,y:600,w:300,h:24},{x:700,y:600,w:500,h:24},{x:1400,y:600,w:400,h:24},
+    {x:300,y:900,w:400,h:24},{x:900,y:900,w:500,h:24},{x:1500,y:900,w:300,h:24},
+    {x:200,y:1200,w:500,h:24},{x:900,y:1200,w:400,h:24},{x:1450,y:1200,w:350,h:24},
+    {x:600,y:300,w:24,h:300},{x:1200,y:324,w:24,h:280},{x:900,y:600,w:24,h:300},
+    {x:400,y:900,w:24,h:300},{x:1400,y:624,w:24,h:280}],
+    spawns:[{x:100,y:150},{x:1900,y:150},{x:100,y:1380},{x:1900,y:1380},
+            {x:1000,y:120},{x:1000,y:1400},{x:120,y:750},{x:1880,y:750}]},
+  { name:'Crossfire', bg:'#2d2417', wall:'#9a7b3f', border:'#6b552c', walls:[
+    {x:950,y:400,w:100,h:700},{x:650,y:700,w:700,h:100},
+    {x:200,y:200,w:260,h:24},{x:200,y:200,w:24,h:260},
+    {x:1540,y:200,w:260,h:24},{x:1776,y:200,w:24,h:260},
+    {x:200,y:1276,w:24,h:224},{x:200,y:1276,w:260,h:24},
+    {x:1776,y:1276,w:24,h:224},{x:1540,y:1276,w:260,h:24},
+    {x:500,y:560,w:70,h:70},{x:1430,y:560,w:70,h:70},
+    {x:500,y:870,w:70,h:70},{x:1430,y:870,w:70,h:70}],
+    spawns:[{x:120,y:120},{x:1880,y:120},{x:120,y:1380},{x:1880,y:1380},
+            {x:1000,y:120},{x:1000,y:1380},{x:120,y:750},{x:1880,y:750}]},
+  { name:'Pillars', bg:'#16242d', wall:'#3f7a86', border:'#2c545c', walls:[
+    {x:350,y:300,w:60,h:60},{x:700,y:300,w:60,h:60},{x:1050,y:300,w:60,h:60},{x:1400,y:300,w:60,h:60},{x:1700,y:300,w:60,h:60},
+    {x:500,y:550,w:60,h:60},{x:850,y:550,w:60,h:60},{x:1200,y:550,w:60,h:60},{x:1550,y:550,w:60,h:60},
+    {x:350,y:800,w:60,h:60},{x:700,y:800,w:60,h:60},{x:1050,y:800,w:60,h:60},{x:1400,y:800,w:60,h:60},{x:1700,y:800,w:60,h:60},
+    {x:500,y:1050,w:60,h:60},{x:850,y:1050,w:60,h:60},{x:1200,y:1050,w:60,h:60},{x:1550,y:1050,w:60,h:60},
+    {x:350,y:1250,w:60,h:60},{x:1050,y:1250,w:60,h:60},{x:1700,y:1250,w:60,h:60}],
+    spawns:[{x:120,y:120},{x:1880,y:120},{x:120,y:1380},{x:1880,y:1380},
+            {x:1000,y:120},{x:1000,y:1400},{x:120,y:750},{x:1880,y:750}]},
+  { name:'Fortress', bg:'#2d1717', wall:'#9a4f3f', border:'#6b372c', walls:[
+    {x:700,y:500,w:250,h:24},{x:1050,y:500,w:250,h:24},
+    {x:700,y:976,w:250,h:24},{x:1050,y:976,w:250,h:24},
+    {x:700,y:500,w:24,h:200},{x:700,y:800,w:24,h:200},
+    {x:1276,y:500,w:24,h:200},{x:1276,y:800,w:24,h:200},
+    {x:950,y:700,w:100,h:100},
+    {x:300,y:300,w:140,h:30},{x:1560,y:300,w:140,h:30},
+    {x:300,y:1170,w:140,h:30},{x:1560,y:1170,w:140,h:30},
+    {x:300,y:720,w:30,h:120},{x:1670,y:720,w:30,h:120}],
+    spawns:[{x:120,y:120},{x:1880,y:120},{x:120,y:1380},{x:1880,y:1380},
+            {x:1000,y:130},{x:1000,y:1370},{x:130,y:750},{x:1870,y:750}]},
+  { name:'Lanes', bg:'#17252d', wall:'#3f6b86', border:'#2c4a5c', walls:[
+    {x:0,y:380,w:720,h:24},{x:920,y:380,w:1080,h:24},
+    {x:0,y:760,w:1080,h:24},{x:1280,y:760,w:720,h:24},
+    {x:0,y:1140,w:720,h:24},{x:920,y:1140,w:1080,h:24},
+    {x:500,y:120,w:24,h:200},{x:1400,y:500,w:24,h:200},
+    {x:600,y:850,w:24,h:200},{x:1450,y:1180,w:24,h:200},
+    {x:1000,y:500,w:24,h:200},{x:300,y:850,w:24,h:200}],
+    spawns:[{x:120,y:180},{x:1880,y:180},{x:120,y:1360},{x:1880,y:1360},
+            {x:1000,y:560},{x:200,y:560},{x:1800,y:950},{x:1000,y:950}]},
 ];
 
 // ===================== STATE =====================
@@ -114,6 +165,15 @@ let stormElapsed = 0;
 let connecting = false;
 let joined = false;
 let joinTimeout = null;
+
+// map voting
+let voting = false;
+let voteCandidates = [];
+let votes = {};                // playerId -> mapIndex
+let myVote = null;
+let voteResolved = false;
+let voteTimer = null;
+let voteCountdownInterval = null;
 
 // ===================== INPUT =====================
 let keys = {};
@@ -225,7 +285,7 @@ function tryCreate(attempt) {
     });
     peer.on('connection', conn => {
         conn.on('open', () => {
-            if (gameActive) { try { conn.close(); } catch {} return; } // no join mid-game
+            if (gameActive || voting) { try { conn.close(); } catch {} return; } // no join mid-game/vote
             if (!connections.includes(conn)) connections.push(conn);
         });
         conn.on('data', data => handleHostReceive(data, conn));
@@ -330,6 +390,13 @@ function handleHostReceive(data, conn) {
         const p = players[data.id];
         if (p.alive && gameActive) createBullet(data.id, p.x, p.y, data.angle);
     }
+    if (data.type === 'vote' && voting) {
+        votes[data.id] = data.mapIndex;
+        const counts = computeVoteCounts();
+        broadcast({ type: 'voteUpdate', counts });
+        updateVoteCounts(counts);
+        if (Object.keys(votes).length >= Object.keys(players).length) hostFinishVote();
+    }
 }
 
 function handleClientReceive(data, code) {
@@ -353,7 +420,25 @@ function handleClientReceive(data, code) {
         }
         if (!gameActive) updatePlayerList();
     }
+    if (data.type === 'voteStart') {
+        voting = true;
+        hostId = data.hostId || hostId;
+        if (data.players) {
+            for (const [id, info] of Object.entries(data.players)) {
+                if (!players[id]) players[id] = makePlayer(id, info.name, info.char);
+                else { players[id].name = info.name; players[id].charIndex = info.char; }
+            }
+            for (const id of Object.keys(players)) { if (!data.players[id]) delete players[id]; }
+        }
+        voteCandidates = data.candidates || [];
+        votes = {}; myVote = null; voteResolved = false;
+        showVoteScreen(data.duration || VOTE_DURATION);
+    }
+    if (data.type === 'voteUpdate') {
+        updateVoteCounts(data.counts || {});
+    }
     if (data.type === 'gameStart' || data.type === 'newRound') {
+        voting = false;
         currentMapIdx = data.mapIndex;
         roundNum = data.roundNum;
         hostId = data.hostId || hostId;
@@ -454,27 +539,151 @@ function setupLobbyEvents() {
 }
 
 // ===================== GAME START =====================
-function hostStartGame() {
+// Both "Start" (from waiting room) and "Next Round" (from leaderboard) now open a map vote.
+function hostStartGame() { hostStartVote(); }
+function hostNextRound() { hostStartVote(); }
+
+// ----- map voting (host drives it) -----
+function pickCandidates(n) {
+    const pool = [];
+    for (let i = 0; i < MAPS.length; i++) {
+        if (roundNum === 0 || i !== currentMapIdx) pool.push(i); // don't re-offer the map just played
+    }
+    for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+    return pool.slice(0, Math.min(n, pool.length));
+}
+
+function hostStartVote() {
     if (!isHost || gameActive) return;
-    currentMapIdx = Math.floor(Math.random() * MAPS.length);
-    roundNum = 1;
+    voting = true;
+    voteResolved = false;
+    votes = {};
+    myVote = null;
+    voteCandidates = pickCandidates(VOTE_CANDIDATES);
+    broadcast({ type: 'voteStart', candidates: voteCandidates, duration: VOTE_DURATION,
+                hostId, players: serializePlayers() });
+    showVoteScreen(VOTE_DURATION);
+    clearTimeout(voteTimer);
+    voteTimer = setTimeout(hostFinishVote, VOTE_DURATION);
+}
+
+function computeVoteCounts() {
+    const c = {};
+    for (const m of voteCandidates) c[m] = 0;
+    for (const v of Object.values(votes)) if (v in c) c[v]++;
+    return c;
+}
+
+function hostFinishVote() {
+    if (!isHost || voteResolved) return;
+    voteResolved = true;
+    clearTimeout(voteTimer);
+    const counts = computeVoteCounts();
+    let max = -1, winners = [];
+    for (const m of voteCandidates) {
+        if (counts[m] > max) { max = counts[m]; winners = [m]; }
+        else if (counts[m] === max) winners.push(m);
+    }
+    const winner = winners.length ? winners[Math.floor(Math.random() * winners.length)]
+                                  : Math.floor(Math.random() * MAPS.length);
+    hostBeginRound(winner);
+}
+
+function hostBeginRound(mapIndex) {
+    voting = false;
+    currentMapIdx = mapIndex;
+    roundNum++;
+    for (const p of Object.values(players)) { p.lives = MAX_LIVES; p.alive = true; p.invincibleUntil = 0; p.lastStormDamage = 0; }
     assignSpawns();
+    bullets = [];
     broadcast({ type: 'gameStart', mapIndex: currentMapIdx, roundNum, hostId, players: serializePlayers() });
+    $('roundEnd').classList.add('hidden');
     beginGame();
 }
 
-function hostNextRound() {
-    if (!isHost) return;
-    let next;
-    do { next = Math.floor(Math.random() * MAPS.length); } while (next === currentMapIdx && MAPS.length > 1);
-    currentMapIdx = next;
-    roundNum++;
-    for (const p of Object.values(players)) { p.lives = MAX_LIVES; p.alive = true; p.invincibleUntil = 0; }
-    assignSpawns();
-    bullets = [];
-    broadcast({ type: 'newRound', mapIndex: currentMapIdx, roundNum, hostId, players: serializePlayers() });
+// cast a vote (host records locally, clients send to host); re-clicking changes your vote
+function castVote(mapIndex) {
+    if (!voting || !voteCandidates.includes(mapIndex)) return;
+    myVote = mapIndex;
+    highlightMyVote();
+    if (isHost) {
+        votes[myId] = mapIndex;
+        const counts = computeVoteCounts();
+        broadcast({ type: 'voteUpdate', counts });
+        updateVoteCounts(counts);
+        if (Object.keys(votes).length >= Object.keys(players).length) hostFinishVote();
+    } else if (hostConn) {
+        hostConn.send({ type: 'vote', id: myId, mapIndex });
+    }
+}
+
+// ----- map vote UI -----
+function renderMapPreview(canvas, idx) {
+    const m = MAPS[idx];
+    const cx = canvas.getContext('2d');
+    const cw = canvas.width, ch = canvas.height;
+    const sx = cw / MAP_W, sy = ch / MAP_H;
+    cx.fillStyle = m.bg; cx.fillRect(0, 0, cw, ch);
+    cx.fillStyle = m.wall;
+    for (const w of m.walls) cx.fillRect(w.x * sx, w.y * sy, Math.max(1, w.w * sx), Math.max(1, w.h * sy));
+    cx.strokeStyle = '#e94560'; cx.lineWidth = 2; cx.strokeRect(0, 0, cw, ch);
+}
+
+function showVoteScreen(duration) {
+    $('lobby').classList.add('hidden');
+    $('waitingRoom').classList.add('hidden');
     $('roundEnd').classList.add('hidden');
-    beginGame();
+    $('gameScreen').classList.add('hidden');
+    $('voteScreen').classList.remove('hidden');
+
+    const container = $('voteCandidates');
+    container.innerHTML = '';
+    for (const idx of voteCandidates) {
+        const card = document.createElement('div');
+        card.className = 'vote-card';
+        card.dataset.map = idx;
+        const cv = document.createElement('canvas');
+        cv.width = 200; cv.height = 150;
+        card.appendChild(cv);
+        const nm = document.createElement('div');
+        nm.className = 'vote-name';
+        nm.textContent = MAPS[idx].name;
+        card.appendChild(nm);
+        const cnt = document.createElement('div');
+        cnt.className = 'vote-count';
+        cnt.textContent = '0 votes';
+        card.appendChild(cnt);
+        card.addEventListener('click', () => castVote(idx));
+        container.appendChild(card);
+        renderMapPreview(cv, idx);
+    }
+    updateVoteCounts(computeVoteCounts());
+    highlightMyVote();
+
+    clearInterval(voteCountdownInterval);
+    const end = Date.now() + duration;
+    const tick = () => {
+        const left = Math.max(0, Math.ceil((end - Date.now()) / 1000));
+        $('voteTimer').textContent = left + 's';
+        if (left <= 0) clearInterval(voteCountdownInterval);
+    };
+    tick();
+    voteCountdownInterval = setInterval(tick, 250);
+}
+
+function updateVoteCounts(counts) {
+    document.querySelectorAll('#voteCandidates .vote-card').forEach(card => {
+        const idx = parseInt(card.dataset.map);
+        const n = (counts && counts[idx]) || 0;
+        const el = card.querySelector('.vote-count');
+        if (el) el.textContent = n + (n === 1 ? ' vote' : ' votes');
+    });
+}
+
+function highlightMyVote() {
+    document.querySelectorAll('#voteCandidates .vote-card').forEach(card => {
+        card.classList.toggle('voted', parseInt(card.dataset.map) === myVote);
+    });
 }
 
 // ----- spawn safety (no spawning inside walls) -----
@@ -524,9 +733,12 @@ function assignSpawns() {
 }
 
 function beginGame() {
+    voting = false;
+    clearInterval(voteCountdownInterval);
     $('waitingRoom').classList.add('hidden');
     $('lobby').classList.add('hidden');
     $('roundEnd').classList.add('hidden');
+    $('voteScreen').classList.add('hidden');
     $('gameScreen').classList.remove('hidden');
     gameActive = true;
     roundOver = false;

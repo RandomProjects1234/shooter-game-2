@@ -19,7 +19,7 @@ A browser-based, peer-to-peer multiplayer **top-down free-for-all shooter**. No 
 
 ## Match features
 
-- **3 randomized maps** — Warehouse, Bunkers, Arena (a new one each round).
+- **8 maps with pre-round voting** — Warehouse, Bunkers, Arena, Maze, Crossfire, Pillars, Fortress, and Lanes. Before every round players vote on three candidate maps (with minimap previews); most votes wins.
 - **Walls break at 1 minute** — all cover is destroyed 60 seconds into a round, opening the map up.
 - **Closing storm** — a Brawl-Stars / Fortnite-style safe zone shrinks toward the center. Get caught outside and you lose a life every few seconds. Combined with the walls breaking, it forces a showdown.
 - **Leaderboard** — total wins, saved locally per device.
