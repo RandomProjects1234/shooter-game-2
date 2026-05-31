@@ -13,6 +13,18 @@ const INVINCIBLE_TIME = 1500;
 const MAX_LIVES = 3;
 const STATE_RATE = 40;
 const MAP_W = 2000, MAP_H = 1500;
+const BULLET_TTL = 3500;          // ms before a bullet self-destructs (prevents buildup/lag)
+
+// Walls break (all cover destroyed) one minute into a round
+const WALLS_BREAK_TIME = 60000;
+
+// Closing storm (battle-royale style shrinking safe zone)
+const STORM_CX = MAP_W / 2, STORM_CY = MAP_H / 2;
+const STORM_START_DELAY = 8000;     // grace period before it starts closing
+const STORM_SHRINK_DURATION = 70000; // time to shrink from full to minimum
+const STORM_START_R = 1300;         // covers the whole map at the start
+const STORM_MIN_R = 150;            // final tiny safe zone
+const STORM_DAMAGE_INTERVAL = 2500; // lose 1 life per this many ms outside the zone
 
 const CHAR_NAMES = ['Greenie', 'Shadow', 'Goldie', 'Blue', 'Red'];
 
@@ -90,6 +102,13 @@ let roundOver = false;
 let mapAnnounce = 0;
 let leaderboard = {};
 let lastNetUpdate = 0;
+
+// round-event state (walls + storm)
+let roundStartTime = 0;
+let wallsBroken = false;
+let wallsBreakAnnounce = 0;
+let stormRadius = STORM_START_R;
+let stormElapsed = 0;
 
 // connection guards
 let connecting = false;
@@ -362,7 +381,19 @@ function handleClientReceive(data, code) {
             }
         }
         for (const id of Object.keys(players)) { if (!data.players[id]) delete players[id]; }
-        bullets = data.bullets || [];
+        // merge bullets by id so local extrapolation stays smooth instead of snapping
+        const incoming = data.bullets || [];
+        const ids = new Set(incoming.map(b => b.id));
+        for (const b of incoming) {
+            const ex = bullets.find(o => o.id === b.id);
+            if (ex) { ex.x = b.x; ex.y = b.y; ex.vx = b.vx; ex.vy = b.vy; }
+            else bullets.push({ id: b.id, x: b.x, y: b.y, vx: b.vx, vy: b.vy, ownerId: b.ownerId });
+        }
+        bullets = bullets.filter(b => ids.has(b.id));
+        if (typeof data.stormR === 'number') stormRadius = data.stormR;
+        if (data.walls && !wallsBroken) wallsBreakAnnounce = Date.now();
+        wallsBroken = !!data.walls;
+        if (typeof data.el === 'number') stormElapsed = data.el;
     }
     if (data.type === 'roundEnd') {
         gameActive = false;
@@ -383,7 +414,7 @@ function serializePlayers() {
 // ===================== PLAYER =====================
 function makePlayer(id, name, charIdx) {
     return { id, name, charIndex: charIdx, x: 100, y: 100, lives: MAX_LIVES, alive: true,
-             angle: 0, lastShot: 0, invincibleUntil: 0 };
+             angle: 0, lastShot: 0, invincibleUntil: 0, lastStormDamage: 0 };
 }
 
 // ===================== LOBBY UI =====================
@@ -500,6 +531,13 @@ function beginGame() {
     gameActive = true;
     roundOver = false;
     mapAnnounce = Date.now();
+    // reset round-event state
+    roundStartTime = Date.now();
+    wallsBroken = false;
+    wallsBreakAnnounce = 0;
+    stormRadius = STORM_START_R;
+    stormElapsed = 0;
+    for (const p of Object.values(players)) p.lastStormDamage = 0;
     canvas = $('gameCanvas');
     ctx = canvas.getContext('2d');
     resizeCanvas();
@@ -598,6 +636,7 @@ function createBullet(ownerId, x, y, angle) {
     bullets.push({
         id: bulletIdCounter++, ownerId, x: sx, y: sy,
         vx: Math.cos(angle) * BULLET_SPEED, vy: Math.sin(angle) * BULLET_SPEED,
+        born: Date.now(),
     });
 }
 
@@ -609,6 +648,7 @@ function clampToMap(x, y, r) {
     return { x: Math.max(r, Math.min(MAP_W - r, x)), y: Math.max(r, Math.min(MAP_H - r, y)) };
 }
 function resolveWalls(ox, oy, nx, ny, r) {
+    if (wallsBroken) return { x: nx, y: ny };
     const walls = MAPS[currentMapIdx].walls;
     let rx = nx, ry = ny;
     for (const w of walls) { if (rectContains(w, rx, oy, r)) { rx = ox; break; } }
@@ -654,30 +694,65 @@ function update(dt) {
     }
 
     if (isHost) {
+        const now = Date.now();
+        stormElapsed = now - roundStartTime;
+        if (!wallsBroken && stormElapsed >= WALLS_BREAK_TIME) {
+            wallsBroken = true;
+            wallsBreakAnnounce = now;
+        }
+        stormRadius = computeStormRadius(stormElapsed);
+        applyStormDamage(now);
+
         updateBullets(dt);
         checkCollisions();
-        const t = Date.now();
-        if (t - lastNetUpdate > STATE_RATE) {
+        if (now - lastNetUpdate > STATE_RATE) {
             broadcast({ type: 'state', players: serializePlayers(),
-                bullets: bullets.map(b => ({ x: b.x, y: b.y, ownerId: b.ownerId })) });
-            lastNetUpdate = t;
+                bullets: bullets.map(b => ({ id: b.id, x: b.x, y: b.y, vx: b.vx, vy: b.vy, ownerId: b.ownerId })),
+                stormR: stormRadius, walls: wallsBroken, el: stormElapsed });
+            lastNetUpdate = now;
         }
         checkRoundEnd();
+    } else {
+        // client: advance bullets locally between state updates for smooth motion (no stutter)
+        for (const b of bullets) { b.x += b.vx * dt; b.y += b.vy * dt; }
     }
 
     updateCamera();
 }
 
 function updateBullets(dt) {
+    const now = Date.now();
     const walls = MAPS[currentMapIdx].walls;
     bullets = bullets.filter(b => {
         b.x += b.vx * dt; b.y += b.vy * dt;
+        if (now - b.born > BULLET_TTL) return false;           // self-destruct so bullets never pile up
         if (b.x < 0 || b.x > MAP_W || b.y < 0 || b.y > MAP_H) return false;
-        for (const w of walls) {
-            if (b.x > w.x && b.x < w.x + w.w && b.y > w.y && b.y < w.y + w.h) return false;
+        if (!wallsBroken) {
+            for (const w of walls) {
+                if (b.x > w.x && b.x < w.x + w.w && b.y > w.y && b.y < w.y + w.h) return false;
+            }
         }
         return true;
     });
+}
+
+// ----- closing storm -----
+function computeStormRadius(elapsed) {
+    if (elapsed < STORM_START_DELAY) return STORM_START_R;
+    const progress = Math.min(1, (elapsed - STORM_START_DELAY) / STORM_SHRINK_DURATION);
+    return STORM_START_R + (STORM_MIN_R - STORM_START_R) * progress;
+}
+
+function applyStormDamage(now) {
+    for (const p of Object.values(players)) {
+        if (!p.alive) continue;
+        const d = Math.hypot(p.x - STORM_CX, p.y - STORM_CY);
+        if (d > stormRadius && now - (p.lastStormDamage || 0) > STORM_DAMAGE_INTERVAL) {
+            p.lives--;
+            p.lastStormDamage = now;
+            if (p.lives <= 0) p.alive = false;
+        }
+    }
 }
 
 function checkCollisions() {
@@ -754,12 +829,23 @@ function render() {
     ctx.lineWidth = 4;
     ctx.strokeRect(0, 0, MAP_W, MAP_H);
 
-    for (const w of map.walls) {
-        ctx.fillStyle = map.wall;
-        ctx.fillRect(w.x, w.y, w.w, w.h);
-        ctx.strokeStyle = map.border;
-        ctx.lineWidth = 2;
-        ctx.strokeRect(w.x, w.y, w.w, w.h);
+    if (!wallsBroken) {
+        for (const w of map.walls) {
+            ctx.fillStyle = map.wall;
+            ctx.fillRect(w.x, w.y, w.w, w.h);
+            ctx.strokeStyle = map.border;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(w.x, w.y, w.w, w.h);
+        }
+    } else if (wallsBreakAnnounce && Date.now() - wallsBreakAnnounce < 500) {
+        // brief crumble flash where the walls used to be
+        ctx.save();
+        ctx.globalAlpha = 1 - (Date.now() - wallsBreakAnnounce) / 500;
+        for (const w of map.walls) {
+            ctx.fillStyle = '#ffcc00';
+            ctx.fillRect(w.x, w.y, w.w, w.h);
+        }
+        ctx.restore();
     }
 
     // Bullets (image)
@@ -810,6 +896,24 @@ function render() {
         }
     }
 
+    // Storm overlay (everything OUTSIDE the safe circle is the danger zone).
+    // At round start the radius covers the whole map, so nothing shows yet.
+    {
+        const r = Math.max(0, stormRadius);
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, MAP_W, MAP_H);
+        ctx.arc(STORM_CX, STORM_CY, r, 0, Math.PI * 2, true); // reverse arc punches a hole
+        ctx.fillStyle = 'rgba(150, 40, 210, 0.30)';
+        ctx.fill('evenodd');
+        ctx.beginPath();
+        ctx.arc(STORM_CX, STORM_CY, r, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(210, 130, 255, 0.9)';
+        ctx.lineWidth = 6;
+        ctx.stroke();
+        ctx.restore();
+    }
+
     ctx.restore();
 
     // HUD
@@ -830,6 +934,34 @@ function render() {
         ctx.fillText(map.name.toUpperCase(), canvas.width / 2, canvas.height / 2 - 20);
         ctx.font = '20px monospace'; ctx.fillStyle = '#aaa';
         ctx.fillText('ROUND ' + roundNum, canvas.width / 2, canvas.height / 2 + 20);
+        ctx.restore();
+    }
+
+    // Center-top status: walls countdown, then storm warning
+    if (gameActive) {
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 16px monospace';
+        if (!wallsBroken) {
+            const left = Math.max(0, Math.ceil((WALLS_BREAK_TIME - stormElapsed) / 1000));
+            ctx.fillStyle = '#ffcc00';
+            ctx.fillText('💥 Walls break in ' + left + 's', canvas.width / 2, 26);
+        } else {
+            ctx.fillStyle = '#d27aff';
+            ctx.fillText('🌩 STORM CLOSING — get to the circle!', canvas.width / 2, 26);
+        }
+        ctx.restore();
+    }
+
+    // "WALLS DESTROYED" big announce
+    if (wallsBreakAnnounce && now - wallsBreakAnnounce < 2000) {
+        const a = Math.min(1, (2000 - (now - wallsBreakAnnounce)) / 700);
+        ctx.save();
+        ctx.globalAlpha = a;
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 42px monospace';
+        ctx.fillStyle = '#ffcc00';
+        ctx.fillText('WALLS DESTROYED!', canvas.width / 2, canvas.height / 2 - 70);
         ctx.restore();
     }
 
