@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Pixel Blasters</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+</head>
+<body>
+    <!-- LOBBY SCREEN -->
+    <div id="lobby">
+        <h1>PIXEL BLASTERS</h1>
+        <div class="lobby-section">
+            <label for="nameInput">YOUR NAME</label>
+            <input type="text" id="nameInput" maxlength="12" placeholder="Enter name..." autocomplete="off">
+        </div>
+        <div class="lobby-section">
+            <label>CHOOSE YOUR FIGHTER</label>
+            <div id="characterSelect">
+                <div class="char-option selected" data-char="0"><canvas width="64" height="64"></canvas><span>Frosty</span></div>
+                <div class="char-option" data-char="1"><canvas width="64" height="64"></canvas><span>Shadow</span></div>
+                <div class="char-option" data-char="2"><canvas width="64" height="64"></canvas><span>Goldie</span></div>
+                <div class="char-option" data-char="3"><canvas width="64" height="64"></canvas><span>Glacier</span></div>
+                <div class="char-option" data-char="4"><canvas width="64" height="64"></canvas><span>Blaze</span></div>
+            </div>
+        </div>
+        <div class="lobby-actions">
+            <button id="createBtn">CREATE ROOM</button>
+            <div class="divider">OR</div>
+            <div class="join-row">
+                <input type="text" id="roomInput" maxlength="6" placeholder="Room code" autocomplete="off">
+                <button id="joinBtn">JOIN</button>
+            </div>
+        </div>
+        <div id="lobbyStatus"></div>
+    </div>
+
+    <!-- WAITING ROOM -->
+    <div id="waitingRoom" class="hidden">
+        <h2>WAITING FOR PLAYERS</h2>
+        <div id="roomCode"></div>
+        <p>Share this code with friends!</p>
+        <div id="playerList"></div>
+        <button id="startGameBtn">START GAME</button>
+        <div id="waitingStatus"></div>
+    </div>
+
+    <!-- GAME SCREEN -->
+    <div id="gameScreen" class="hidden">
+        <canvas id="gameCanvas"></canvas>
+        <div id="hud">
+            <div id="livesDisplay"></div>
+            <div id="roundDisplay"></div>
+        </div>
+        <!-- Mobile controls -->
+        <div id="mobileControls">
+            <div id="joystickZone"></div>
+            <div id="shootBtn">FIRE</div>
+        </div>
+    </div>
+
+    <!-- ROUND END / LEADERBOARD -->
+    <div id="roundEnd" class="hidden">
+        <h2 id="roundWinner"></h2>
+        <div id="leaderboard">
+            <h3>LEADERBOARD</h3>
+            <div id="leaderboardList"></div>
+        </div>
+        <button id="nextRoundBtn" class="hidden">NEXT ROUND</button>
+        <p id="waitingNext" class="hidden">Waiting for host...</p>
+    </div>
+
+    <script src="game.js"></script>
+</body>
+</html>
