@@ -69,15 +69,16 @@ function loadImages(cb) {
     bulletImg.onerror = tick;
     bulletImg.src = 'bullet.png';
 
-    // boss assets load in the background (not gated on cb)
-    bossImg.phase1 = loadImg('chefphase1.png');
-    bossImg.phase2 = loadImg('chefphase2.png');
-    bossImg.phase3 = loadImg('realchefphase3.png');
-    bossImg.phase4 = loadImg('chefphase4.png');
-    bossImg.pizza  = loadImg('pizzaattack.png');
-    bossImg.pie    = loadImg('pieattack.png');
-    bossImg.banana = loadImg('banana.png');
-    bossImg.cheese = loadImg('cheeseattack.png');
+    // boss assets load in the background (not gated on cb). ?v bust = pick up real art over cached placeholders.
+    const v = '?v=5';
+    bossImg.phase1 = loadImg('chefphase1.png' + v);
+    bossImg.phase2 = loadImg('chefphase2.png' + v);
+    bossImg.phase3 = loadImg('realchefphase3.png' + v);
+    bossImg.phase4 = loadImg('chefphase4.png' + v);
+    bossImg.pizza  = loadImg('pizzaattack.png' + v);
+    bossImg.pie    = loadImg('pieattack.png' + v);
+    bossImg.banana = loadImg('banana.png' + v);
+    bossImg.cheese = loadImg('cheeseattack.png' + v);
 }
 
 // ===================== MAP DEFINITIONS =====================
