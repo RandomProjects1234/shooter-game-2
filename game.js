@@ -41,6 +41,12 @@ const PHASE4_HITS = 25;              // bullet-hits to clear the secret phase
 const PHASE4_HITS_PER_DIZZY = 5;     // hits that register per dizzy window
 const PIE_REFLECT_SHOTS = 4;         // bullets to reflect a pie back at the boss
 const BOSS_PROJ_TTL = 9000;          // ms before a boss projectile self-destructs (prevents pile-up)
+const BOSS_P4_RADIUS = 78;           // phase-4 boss hitbox (roll contact + dizzy shooting)
+const BOSS_P4_DRAW = 185;            // phase-4 boss sprite size (bigger than phases 1-3)
+const CHEESE_SPEED = 980;            // Hollow-Purple beam speed (faster)
+const CHEESE_SIZE = 70;              // beam sprite size (bigger)
+const CHEESE_HIT = 34;               // beam hit radius (wider)
+const CHEESE_P4_INTERVAL = 7000;     // ms between Hollow-Purple volleys during phase 4
 const BOSS_NAME_KITCHEN = "Chef Big Back's kitchen";
 const BOSS_NAME_FINAL = "Chef Big Back";
 
@@ -1290,7 +1296,8 @@ function advanceBoss(dt, now) {
         if (boss.phase >= 2 && now - bossTimers.banana > 4500) { bossTimers.banana = now; spawnBanana(); }
         if (boss.phase >= 3 && now - bossTimers.cheese > 10000) { bossTimers.cheese = now; spawnCheese(); }
     } else {
-        // phase 4: rolling
+        // phase 4: rolling + Hollow-Purple volleys
+        if (now - bossTimers.cheese > CHEESE_P4_INTERVAL) { bossTimers.cheese = now; spawnCheese(); }
         if (boss.rollState === 'dizzy') {
             if (now >= boss.dizzyUntil) { boss.rollState = 'rolling'; boss.rollsLeft = 3; startRoll(now); }
         } else if (boss.rollState === 'off') {
@@ -1365,7 +1372,7 @@ function updateBoss(dt, now) {
     warnings = warnings.filter(w => {
         if (!w.fired && now >= w.fireAt) {
             w.fired = true;
-            const sp = 620;
+            const sp = CHEESE_SPEED;
             cheeses.push({ x: boss.x, y: boss.y, vx: Math.cos(w.angle) * sp, vy: Math.sin(w.angle) * sp, lastTrail: 0 });
             return false;
         }
@@ -1374,19 +1381,20 @@ function updateBoss(dt, now) {
     // cheese beams (leave fire trail)
     cheeses = cheeses.filter(a => {
         a.x += a.vx * dt; a.y += a.vy * dt;
-        if (now - a.lastTrail > 50) { a.lastTrail = now; fireTrails.push({ x: a.x, y: a.y, until: now + 2000 }); }
-        for (const p of Object.values(players)) if (circlesOverlap(a.x, a.y, 16, p.x, p.y, PLAYER_RADIUS)) damagePlayer(p, now);
+        if (now - a.lastTrail > 40) { a.lastTrail = now; fireTrails.push({ x: a.x, y: a.y, until: now + 2000, big: true }); }
+        for (const p of Object.values(players)) if (circlesOverlap(a.x, a.y, CHEESE_HIT, p.x, p.y, PLAYER_RADIUS)) damagePlayer(p, now);
         return !offArena(a.x, a.y);
     });
     // fire trails (damage + expire)
     fireTrails = fireTrails.filter(f => {
         if (now > f.until) return false;
-        for (const p of Object.values(players)) if (circlesOverlap(f.x, f.y, 22, p.x, p.y, PLAYER_RADIUS)) damagePlayer(p, now);
+        const r = f.big ? 34 : 22;
+        for (const p of Object.values(players)) if (circlesOverlap(f.x, f.y, r, p.x, p.y, PLAYER_RADIUS)) damagePlayer(p, now);
         return true;
     });
-    // phase-4 roll contact
+    // phase-4 roll contact (bigger hitbox)
     if (boss.phase === 4 && boss.rollState === 'rolling') {
-        for (const p of Object.values(players)) if (circlesOverlap(boss.x, boss.y, 40, p.x, p.y, PLAYER_RADIUS)) damagePlayer(p, now);
+        for (const p of Object.values(players)) if (circlesOverlap(boss.x, boss.y, BOSS_P4_RADIUS, p.x, p.y, PLAYER_RADIUS)) damagePlayer(p, now);
     }
     // players falling off the island
     for (const p of Object.values(players)) {
@@ -1415,6 +1423,7 @@ function enterPhase4(now) {
     bossHits = 0; bossDizzyHits = 0;
     bossText = '';
     pizzas = []; pies = []; bananas = []; cheeses = []; warnings = [];
+    bossTimers.cheese = now;   // first phase-4 Hollow-Purple fires after the interval, not during the intro
     setCenterText("didn't think it'd come down to this", 5000);
     startRoll(now);
 }
@@ -1432,7 +1441,7 @@ function checkBossCollisions(now) {
         }
         // shoot boss while dizzy (phase 4)
         if (boss && boss.phase === 4 && boss.rollState === 'dizzy' && bossDizzyHits < PHASE4_HITS_PER_DIZZY
-            && circlesOverlap(b.x, b.y, BULLET_RADIUS, boss.x, boss.y, 44)) {
+            && circlesOverlap(b.x, b.y, BULLET_RADIUS, boss.x, boss.y, BOSS_P4_RADIUS)) {
             bossDizzyHits++; bossHits++;
             if (bossHits >= PHASE4_HITS) bossWin(now);
             return false;
@@ -1807,18 +1816,19 @@ function renderBoss() {
 
     // fire trails
     for (const f of fireTrails) {
+        const r1 = f.big ? 34 : 22, r2 = f.big ? 16 : 10;
         ctx.save();
         ctx.globalAlpha = 0.55;
         ctx.fillStyle = '#ff6a1a';
-        ctx.beginPath(); ctx.arc(f.x, f.y, 22, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(f.x, f.y, r1, 0, Math.PI * 2); ctx.fill();
         ctx.globalAlpha = 0.9; ctx.fillStyle = '#ffd23a';
-        ctx.beginPath(); ctx.arc(f.x, f.y, 10, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(f.x, f.y, r2, 0, Math.PI * 2); ctx.fill();
         ctx.restore();
     }
-    // cheese warning lines (flashing yellow)
+    // cheese warning lines (flashing yellow, wider to match the bigger beam)
     for (const w of warnings) {
         if (Math.floor(now / 100) % 2 === 0) continue;
-        ctx.strokeStyle = 'rgba(255,230,60,0.9)'; ctx.lineWidth = 10;
+        ctx.strokeStyle = 'rgba(255,230,60,0.9)'; ctx.lineWidth = 22;
         ctx.beginPath(); ctx.moveTo(w.x, w.y);
         ctx.lineTo(w.x + Math.cos(w.angle) * 2400, w.y + Math.sin(w.angle) * 2400); ctx.stroke();
     }
@@ -1838,7 +1848,12 @@ function renderBoss() {
     }
 
     // attacks
-    for (const a of cheeses) drawImgAt(bossImg.cheese, a.x, a.y, 40);
+    for (const a of cheeses) {
+        // purple glow behind the Hollow-Purple beam so it reads bigger/wider
+        ctx.save(); ctx.globalAlpha = 0.5; ctx.fillStyle = '#b026ff';
+        ctx.beginPath(); ctx.arc(a.x, a.y, CHEESE_HIT + 8, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+        drawImgAt(bossImg.cheese, a.x, a.y, CHEESE_SIZE);
+    }
     for (const a of pizzas) drawImgAt(bossImg.pizza, a.x, a.y, 36);
     for (const a of bananas) drawImgAt(bossImg.banana, a.x, a.y, 40);
     for (const a of pies) {
@@ -1856,7 +1871,7 @@ function renderBoss() {
     if (boss) {
         const img = boss.phase === 1 ? bossImg.phase1 : boss.phase === 2 ? bossImg.phase2
                   : boss.phase === 3 ? bossImg.phase3 : bossImg.phase4;
-        const size = 130;
+        const size = boss.phase === 4 ? BOSS_P4_DRAW : 130;
         if (boss.phase === 4 && boss.rollState === 'rolling') {
             ctx.save(); ctx.translate(boss.x, boss.y); ctx.rotate(now / 90); drawImgAt(img, 0, 0, size); ctx.restore();
         } else {
