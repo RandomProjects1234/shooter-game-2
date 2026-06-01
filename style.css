@@ -206,6 +206,38 @@ button:active {
     border-color: #53d769;
 }
 
+#modeRow {
+    margin-bottom: 16px;
+}
+
+#modeToggleBtn {
+    background: #16213e;
+    border: 2px solid #0f3460;
+    color: #eee;
+    padding: 12px 24px;
+    font-size: 0.95rem;
+}
+
+#modeToggleBtn.boss {
+    border-color: #b026ff;
+    background: rgba(176, 38, 255, 0.18);
+    color: #e7b8ff;
+}
+
+#modeToggleBtn:hover {
+    border-color: #e94560;
+    transform: scale(1.02);
+}
+
+#modeLabel {
+    background: #16213e;
+    border: 1px solid #0f3460;
+    padding: 10px 20px;
+    border-radius: 8px;
+    letter-spacing: 1px;
+    color: #aaa;
+}
+
 /* GAME SCREEN */
 #gameScreen {
     position: fixed;

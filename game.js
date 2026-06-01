@@ -234,6 +234,9 @@ let connecting = false;
 let joined = false;
 let joinTimeout = null;
 
+// room/session mode chosen by host in the waiting room: 'ffa' or 'boss'
+let roomMode = 'ffa';
+
 // map voting
 let voting = false;
 let voteCandidates = [];
@@ -448,7 +451,7 @@ function handleHostReceive(data, conn) {
         players[data.id].charIndex = data.char;
         updatePlayerList();
         broadcast({ type: 'playerList', hostId, players: serializePlayers() });
-        conn.send({ type: 'playerList', hostId, players: serializePlayers() });
+        conn.send({ type: 'playerList', hostId, players: serializePlayers(), roomMode });
     }
     if (data.type === 'input' && players[data.id]) {
         const p = players[data.id];
@@ -487,6 +490,11 @@ function handleClientReceive(data, code) {
             if (!incoming[id]) delete players[id];
         }
         if (!gameActive) updatePlayerList();
+        if (data.roomMode) { roomMode = data.roomMode; updateModeUI(); }
+    }
+    if (data.type === 'roomMode') {
+        roomMode = data.roomMode;
+        updateModeUI();
     }
     if (data.type === 'voteStart') {
         voting = true;
@@ -594,6 +602,30 @@ function showWaiting(code) {
     $('roomCode').textContent = code;
     if (isHost) { $('startGameBtn').classList.remove('hidden'); }
     else { $('startGameBtn').classList.add('hidden'); }
+    updateModeUI();
+}
+
+// Host sees a clickable toggle; clients see a read-only label.
+function updateModeUI() {
+    const btn = $('modeToggleBtn'), label = $('modeLabel');
+    const isBoss = roomMode === 'boss';
+    const text = isBoss ? 'MODE: BOSS FIGHT 🍕' : 'MODE: FREE-FOR-ALL ⚔️';
+    if (isHost) {
+        btn.classList.remove('hidden'); label.classList.add('hidden');
+        btn.textContent = text;
+        btn.classList.toggle('boss', isBoss);
+        $('startGameBtn').textContent = isBoss ? 'START BOSS FIGHT' : 'START GAME';
+    } else {
+        btn.classList.add('hidden'); label.classList.remove('hidden');
+        label.textContent = isBoss ? 'Mode: Boss Fight 🍕 (all vs Chef Big Back)' : 'Mode: Free-for-All ⚔️';
+    }
+}
+
+function toggleRoomMode() {
+    if (!isHost) return;
+    roomMode = roomMode === 'ffa' ? 'boss' : 'ffa';
+    updateModeUI();
+    broadcast({ type: 'roomMode', roomMode });
 }
 
 function updatePlayerList() {
@@ -619,14 +651,28 @@ function setupLobbyEvents() {
     $('joinBtn').addEventListener('click', joinRoom);
     $('startGameBtn').addEventListener('click', hostStartGame);
     $('nextRoundBtn').addEventListener('click', hostNextRound);
+    $('modeToggleBtn').addEventListener('click', toggleRoomMode);
     $('nameInput').addEventListener('keydown', e => { if (e.key === 'Enter') createRoom(); });
     $('roomInput').addEventListener('keydown', e => { if (e.key === 'Enter') joinRoom(); });
 }
 
 // ===================== GAME START =====================
-// Both "Start" (from waiting room) and "Next Round" (from leaderboard) now open a map vote.
-function hostStartGame() { hostStartVote(); }
+// "Start" respects the room mode: FFA opens a map vote, Boss jumps straight into the fight.
+function hostStartGame() {
+    if (!isHost || gameActive) return;
+    if (roomMode === 'boss') hostStartBossMode();
+    else hostStartVote();
+}
 function hostNextRound() { hostStartVote(); }
+
+// Start the co-op boss fight directly from the waiting room (no map vote / kitchen puzzle).
+function hostStartBossMode() {
+    if (!isHost || gameActive) return;
+    mode = 'ffa';
+    roundNum++;
+    beginGame();        // show the game screen + set up canvas
+    startBossFight();   // init boss, teleport everyone onto the island, broadcast bossStart
+}
 
 // ----- map voting (host drives it) -----
 function pickCandidates(n) {
@@ -1491,6 +1537,7 @@ function returnToMenu() {
     $('voteScreen').classList.add('hidden');
     $('waitingRoom').classList.remove('hidden');
     $('waitingStatus').textContent = isHost ? 'Press Start for another game!' : 'Waiting for host...';
+    updateModeUI();
 }
 
 // ===================== CAMERA =====================

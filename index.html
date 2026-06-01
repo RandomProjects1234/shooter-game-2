@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Pixel Blasters</title>
-    <link rel="stylesheet" href="style.css?v=5">
+    <link rel="stylesheet" href="style.css?v=6">
     <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 </head>
 <body>
@@ -42,6 +42,10 @@
         <div id="roomCode"></div>
         <p>Share this code with friends!</p>
         <div id="playerList"></div>
+        <div id="modeRow">
+            <button id="modeToggleBtn">MODE: FREE-FOR-ALL ⚔️</button>
+            <div id="modeLabel" class="hidden">Mode: Free-for-All</div>
+        </div>
         <button id="startGameBtn">START GAME</button>
         <div id="waitingStatus"></div>
     </div>
@@ -79,6 +83,6 @@
         <p id="waitingNext" class="hidden">Waiting for host...</p>
     </div>
 
-    <script src="game.js?v=5"></script>
+    <script src="game.js?v=6"></script>
 </body>
 </html>

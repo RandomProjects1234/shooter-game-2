@@ -9,7 +9,7 @@ A browser-based, peer-to-peer multiplayer **top-down free-for-all shooter**. No 
 
 1. Type a name and pick one of the 5 fighters.
 2. **Create Room** to host — you'll get a 5-letter code. Share it with friends.
-3. Friends type the code and **Join**. The host presses **Start**.
+3. Friends type the code and **Join**. The host can toggle the room between **Free-for-All** and **Boss Fight** mode, then presses **Start** (Boss Fight mode drops everyone straight into the Chef Big Back co-op fight; Free-for-All plays normal rounds).
 4. Last fighter standing wins the round. Maps are random each round and the leaderboard tracks total wins.
 
 ### Controls
