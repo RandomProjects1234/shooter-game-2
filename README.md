@@ -23,6 +23,7 @@ A browser-based, peer-to-peer multiplayer **top-down free-for-all shooter**. No 
 - **Walls break at 1 minute** — all cover is destroyed 60 seconds into a round, opening the map up.
 - **Closing storm** — a Brawl-Stars / Fortnite-style safe zone shrinks toward the center. Get caught outside and you lose a life every few seconds. Combined with the walls breaking, it forces a showdown.
 - **Leaderboard** — total wins, saved locally per device.
+- **Secret boss fight: Chef Big Back** — ~1 in 15 rounds becomes the hidden **Kitchen** map. Shoot all 4 red buttons (they turn green; a 60s timer runs once the first is hit) to teleport everyone — even fallen players, revived to 3 lives — onto a floating sky-island for a co-op boss fight. The boss has 3 patrol phases (dodge homing pizzas, reflect the pies back 4 shots each to damage him, watch for boomerang bananas and Hollow-Purple cheese beams that leave fire trails) plus a secret 4th phase where Chef Big Back jumps onto the island and rolls at you — shoot him while he's dizzy. Beat him to win; wipe and he taunts you back to the menu.
 
 ## Tech
 

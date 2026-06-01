@@ -30,11 +30,28 @@ const STORM_DAMAGE_INTERVAL = 2500; // lose 1 life per this many ms outside the 
 const VOTE_DURATION = 12000;   // ms players have to vote
 const VOTE_CANDIDATES = 3;     // number of maps offered each vote
 
+// ===== Boss fight (Chef Big Back) =====
+const KITCHEN_PUZZLE_TIME = 60000;   // 60s to hit all 4 buttons once the first is on
+const ARENA_W = 2000, ARENA_H = 1500;
+const ISLAND_CX = 1000, ISLAND_CY = 980, ISLAND_RX = 640, ISLAND_RY = 430; // floating island ellipse
+const KITCHEN_TOP_Y = 230;           // boss patrol line in the sky-kitchen
+const KITCHEN_X1 = 360, KITCHEN_X2 = 1640;
+const HITS_PER_PHASE = 10;           // pie-hits to clear phases 1-3
+const PHASE4_HITS = 25;              // bullet-hits to clear the secret phase
+const PHASE4_HITS_PER_DIZZY = 5;     // hits that register per dizzy window
+const PIE_REFLECT_SHOTS = 4;         // bullets to reflect a pie back at the boss
+const BOSS_PROJ_TTL = 9000;          // ms before a boss projectile self-destructs (prevents pile-up)
+const BOSS_NAME_KITCHEN = "Chef Big Back's kitchen";
+const BOSS_NAME_FINAL = "Chef Big Back";
+
 const CHAR_NAMES = ['Greenie', 'Shadow', 'Goldie', 'Blue', 'Red'];
 
 // ===================== IMAGES =====================
 const charImages = [];
 let bulletImg = null;
+const bossImg = {}; // phase1..4, pizza, pie, banana, cheese
+
+function loadImg(src) { const i = new Image(); i.src = src; return i; }
 
 function loadImages(cb) {
     const total = 6;
@@ -51,6 +68,16 @@ function loadImages(cb) {
     bulletImg.onload = tick;
     bulletImg.onerror = tick;
     bulletImg.src = 'bullet.png';
+
+    // boss assets load in the background (not gated on cb)
+    bossImg.phase1 = loadImg('chefphase1.png');
+    bossImg.phase2 = loadImg('chefphase2.png');
+    bossImg.phase3 = loadImg('realchefphase3.png');
+    bossImg.phase4 = loadImg('chefphase4.png');
+    bossImg.pizza  = loadImg('pizzaattack.png');
+    bossImg.pie    = loadImg('pieattack.png');
+    bossImg.banana = loadImg('banana.png');
+    bossImg.cheese = loadImg('cheeseattack.png');
 }
 
 // ===================== MAP DEFINITIONS =====================
@@ -134,7 +161,24 @@ const MAPS = [
     {x:1000,y:500,w:24,h:200},{x:300,y:850,w:24,h:200}],
     spawns:[{x:120,y:180},{x:1880,y:180},{x:120,y:1360},{x:1880,y:1360},
             {x:1000,y:560},{x:200,y:560},{x:1800,y:950},{x:1000,y:950}]},
+  // KITCHEN — special map (not in the vote pool, only appears via the 1/15 roll).
+  // Has 4 shootable buttons; turning all 4 on opens the boss fight.
+  { name:'Kitchen', bg:'#26201a', wall:'#7a6a55', border:'#524534', kitchen:true, walls:[
+    {x:150,y:150,w:500,h:60},{x:1350,y:150,w:500,h:60},
+    {x:150,y:1290,w:500,h:60},{x:1350,y:1290,w:500,h:60},
+    {x:150,y:150,w:60,h:300},{x:1790,y:150,w:60,h:300},
+    {x:150,y:1050,w:60,h:300},{x:1790,y:1050,w:60,h:300},
+    {x:600,y:650,w:300,h:60},{x:1100,y:650,w:300,h:60},
+    {x:600,y:790,w:300,h:60},{x:1100,y:790,w:300,h:60},
+    {x:930,y:450,w:140,h:80},{x:930,y:970,w:140,h:80}],
+    // candidate button positions (4 chosen at random each time)
+    buttonSpots:[{x:300,y:350},{x:1700,y:350},{x:300,y:1150},{x:1700,y:1150},
+                 {x:1000,y:250},{x:1000,y:1250},{x:400,y:750},{x:1600,y:750}],
+    spawns:[{x:1000,y:750},{x:300,y:750},{x:1700,y:750},{x:1000,y:300},
+            {x:1000,y:1200},{x:500,y:400},{x:1500,y:400},{x:1000,y:900}]},
 ];
+const KITCHEN_MAP = MAPS.findIndex(m => m.kitchen);
+const KITCHEN_CHANCE = 15; // 1-in-N chance a round becomes the Kitchen instead of the voted map
 
 // ===================== STATE =====================
 let myId = '', myName = '', myChar = 0;
@@ -160,6 +204,29 @@ let wallsBroken = false;
 let wallsBreakAnnounce = 0;
 let stormRadius = STORM_START_R;
 let stormElapsed = 0;
+
+// ===== mode + kitchen puzzle + boss fight state =====
+let mode = 'ffa';            // 'ffa' | 'boss' | 'cutscene'
+let camScale = 1;
+
+// kitchen button puzzle (only on the Kitchen map)
+let kbuttons = [];           // {x,y,on}
+let kPuzzleStart = 0;        // when first button pressed (0 = not started)
+let kPuzzleCount = 0;
+
+// boss fight
+let boss = null;             // {x,y,phase,dir,img,...} on host; mirrored on clients
+let bossHits = 0;            // pie hits this phase (1-3) or bullet hits (phase 4)
+let bossDizzyHits = 0;       // hits registered in current dizzy window
+let pizzas = [], pies = [], bananas = [], cheeses = [], fireTrails = [], warnings = [];
+let bossText = '';           // text near the boss name area
+let centerText = '';         // big center announcement
+let centerTextUntil = 0;
+let bossTimers = {};         // host attack cooldown timestamps
+let targetCycle = 0;         // round-robin attack targeting
+let bossOutcome = '';        // '' | 'win' | 'lose' during cutscene
+let cutsceneUntil = 0;
+let cutsceneLine = '';
 
 // connection guards
 let connecting = false;
@@ -439,6 +506,8 @@ function handleClientReceive(data, code) {
     }
     if (data.type === 'gameStart' || data.type === 'newRound') {
         voting = false;
+        mode = 'ffa';
+        boss = null;
         currentMapIdx = data.mapIndex;
         roundNum = data.roundNum;
         hostId = data.hostId || hostId;
@@ -451,8 +520,22 @@ function handleClientReceive(data, code) {
         }
         for (const id of Object.keys(players)) { if (!data.players[id]) delete players[id]; }
         bullets = [];
+        kbuttons = data.kbuttons || []; kPuzzleStart = 0; kPuzzleCount = 0;
         $('roundEnd').classList.add('hidden');
         beginGame();
+    }
+    if (data.type === 'bossStart') {
+        mode = 'boss';
+        beginGame();
+        applyBossState(data);
+    }
+    if (data.type === 'bossState') {
+        applyBossState(data);
+    }
+    if (data.type === 'bossEnd') {
+        bossOutcome = data.outcome;
+        cutsceneLine = data.line || '';
+        showBossOutcome(data.outcome, data.line, data.winnerName);
     }
     if (data.type === 'state') {
         for (const [id, info] of Object.entries(data.players)) {
@@ -479,6 +562,7 @@ function handleClientReceive(data, code) {
         if (data.walls && !wallsBroken) wallsBreakAnnounce = Date.now();
         wallsBroken = !!data.walls;
         if (typeof data.el === 'number') stormElapsed = data.el;
+        if (data.kbuttons) { kbuttons = data.kbuttons; kPuzzleCount = data.kcount || 0; kPuzzleStart = data.kstart || 0; }
     }
     if (data.type === 'roundEnd') {
         gameActive = false;
@@ -547,6 +631,7 @@ function hostNextRound() { hostStartVote(); }
 function pickCandidates(n) {
     const pool = [];
     for (let i = 0; i < MAPS.length; i++) {
+        if (MAPS[i].kitchen) continue;                 // Kitchen never appears in the vote
         if (roundNum === 0 || i !== currentMapIdx) pool.push(i); // don't re-offer the map just played
     }
     for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
@@ -591,14 +676,30 @@ function hostFinishVote() {
 
 function hostBeginRound(mapIndex) {
     voting = false;
+    mode = 'ffa';
+    // 1-in-KITCHEN_CHANCE: the round secretly becomes the Kitchen instead of the voted map
+    if (KITCHEN_MAP >= 0 && Math.floor(Math.random() * KITCHEN_CHANCE) === 0) {
+        mapIndex = KITCHEN_MAP;
+    }
     currentMapIdx = mapIndex;
     roundNum++;
     for (const p of Object.values(players)) { p.lives = MAX_LIVES; p.alive = true; p.invincibleUntil = 0; p.lastStormDamage = 0; }
     assignSpawns();
     bullets = [];
-    broadcast({ type: 'gameStart', mapIndex: currentMapIdx, roundNum, hostId, players: serializePlayers() });
+    // set up the kitchen button puzzle if this is the Kitchen
+    kbuttons = []; kPuzzleStart = 0; kPuzzleCount = 0;
+    if (MAPS[currentMapIdx].kitchen) setupKitchenButtons();
+    broadcast({ type: 'gameStart', mapIndex: currentMapIdx, roundNum, hostId,
+                players: serializePlayers(), kbuttons });
     $('roundEnd').classList.add('hidden');
     beginGame();
+}
+
+function setupKitchenButtons() {
+    const spots = [...MAPS[KITCHEN_MAP].buttonSpots];
+    for (let i = spots.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [spots[i], spots[j]] = [spots[j], spots[i]]; }
+    kbuttons = spots.slice(0, 4).map(s => ({ x: s.x, y: s.y, on: false }));
+    kPuzzleStart = 0; kPuzzleCount = 0;
 }
 
 // cast a vote (host records locally, clients send to host); re-clicking changes your vote
@@ -836,7 +937,8 @@ function getMovement() {
 function getAimAngle() {
     const me = players[myId];
     if (!me) return facingAngle;
-    return Math.atan2(mouseY - (me.y - camera.y), mouseX - (me.x - camera.x));
+    const sp = worldToScreen(me.x, me.y);
+    return Math.atan2(mouseY - sp.y, mouseX - sp.x);
 }
 
 function wantsShoot() { return mouseDown || shootTouchActive; }
@@ -876,57 +978,68 @@ function circlesOverlap(x1, y1, r1, x2, y2, r2) {
 function update(dt) {
     const me = players[myId];
     if (!me) { return; }
+    const now = Date.now();
 
-    if (me.alive) {
+    if (me.alive && !bossOutcome) {
         const mov = getMovement();
         if (mov.dx !== 0 || mov.dy !== 0) facingAngle = Math.atan2(mov.dy, mov.dx);
         const nx = me.x + mov.dx * PLAYER_SPEED * dt;
         const ny = me.y + mov.dy * PLAYER_SPEED * dt;
-        const resolved = resolveWalls(me.x, me.y, nx, ny, PLAYER_RADIUS);
-        const clamped = clampToMap(resolved.x, resolved.y, PLAYER_RADIUS);
-        me.x = clamped.x; me.y = clamped.y;
-
+        if (mode === 'boss') {
+            me.x = nx; me.y = ny;                 // free movement; falling off island handled by host
+            if (!isHost) keepRoughlyOnIsland(me); // soft local clamp for feel
+        } else {
+            const resolved = resolveWalls(me.x, me.y, nx, ny, PLAYER_RADIUS);
+            const clamped = clampToMap(resolved.x, resolved.y, PLAYER_RADIUS);
+            me.x = clamped.x; me.y = clamped.y;
+        }
         me.angle = isMobile ? facingAngle : getAimAngle();
 
-        const now = Date.now();
         if (wantsShoot() && now - me.lastShot > SHOOT_COOLDOWN) {
             me.lastShot = now;
             const shootAngle = me.angle;
             if (isHost) createBullet(myId, me.x, me.y, shootAngle);
             else if (hostConn) hostConn.send({ type: 'shoot', id: myId, angle: shootAngle });
         }
-
-        if (!isHost && hostConn) {
-            const t = Date.now();
-            if (t - lastNetUpdate > STATE_RATE) {
-                hostConn.send({ type: 'input', id: myId, x: me.x, y: me.y, angle: me.angle });
-                lastNetUpdate = t;
-            }
+        if (!isHost && hostConn && now - lastNetUpdate > STATE_RATE) {
+            hostConn.send({ type: 'input', id: myId, x: me.x, y: me.y, angle: me.angle });
+            lastNetUpdate = now;
         }
     }
 
     if (isHost) {
-        const now = Date.now();
-        stormElapsed = now - roundStartTime;
-        if (!wallsBroken && stormElapsed >= WALLS_BREAK_TIME) {
-            wallsBroken = true;
-            wallsBreakAnnounce = now;
-        }
-        stormRadius = computeStormRadius(stormElapsed);
-        applyStormDamage(now);
-
         updateBullets(dt);
-        checkCollisions();
-        if (now - lastNetUpdate > STATE_RATE) {
-            broadcast({ type: 'state', players: serializePlayers(),
-                bullets: bullets.map(b => ({ id: b.id, x: b.x, y: b.y, vx: b.vx, vy: b.vy, ownerId: b.ownerId })),
-                stormR: stormRadius, walls: wallsBroken, el: stormElapsed });
-            lastNetUpdate = now;
+        if (mode === 'ffa') {
+            stormElapsed = now - roundStartTime;
+            if (MAPS[currentMapIdx].kitchen) {
+                updateKitchenPuzzle(now);          // may switch mode to 'boss'
+            } else {
+                if (!wallsBroken && stormElapsed >= WALLS_BREAK_TIME) { wallsBroken = true; wallsBreakAnnounce = now; }
+                stormRadius = computeStormRadius(stormElapsed);
+                applyStormDamage(now);
+            }
+            if (mode === 'ffa') {
+                checkCollisions();
+                if (now - lastNetUpdate > STATE_RATE) {
+                    const msg = { type: 'state', players: serializePlayers(),
+                        bullets: bullets.map(b => ({ id: b.id, x: b.x, y: b.y, vx: b.vx, vy: b.vy, ownerId: b.ownerId })),
+                        stormR: stormRadius, walls: wallsBroken, el: stormElapsed };
+                    if (MAPS[currentMapIdx].kitchen) { msg.kbuttons = kbuttons; msg.kcount = kPuzzleCount; msg.kstart = kPuzzleStart; }
+                    broadcast(msg);
+                    lastNetUpdate = now;
+                }
+                checkRoundEnd();
+            }
+        } else if (mode === 'boss') {
+            updateBoss(dt, now);
+            checkBossCollisions(now);
+            if (now - lastNetUpdate > STATE_RATE) { broadcast(serializeBossState()); lastNetUpdate = now; }
+            checkBossEnd();
         }
-        checkRoundEnd();
     } else {
-        // client: advance bullets locally between state updates for smooth motion (no stutter)
+        // client: advance projectiles locally between state updates for smooth motion
         for (const b of bullets) { b.x += b.vx * dt; b.y += b.vy * dt; }
+        if (mode === 'boss') advanceBossProjectilesLocal(dt);
     }
 
     updateCamera();
@@ -985,7 +1098,7 @@ function checkCollisions() {
 }
 
 function checkRoundEnd() {
-    if (!gameActive || roundOver) return;
+    if (!gameActive || roundOver || mode !== 'ffa') return;
     const all = Object.values(players);
     if (all.length <= 1) return;
     const alive = all.filter(p => p.alive);
@@ -1000,9 +1113,396 @@ function checkRoundEnd() {
     }
 }
 
+// ===================== KITCHEN PUZZLE (host) =====================
+function updateKitchenPuzzle(now) {
+    // bullets turn red buttons green
+    bullets = bullets.filter(b => {
+        for (const btn of kbuttons) {
+            if (!btn.on && circlesOverlap(b.x, b.y, BULLET_RADIUS, btn.x, btn.y, 28)) {
+                btn.on = true;
+                kPuzzleCount++;
+                if (kPuzzleCount === 1) kPuzzleStart = now;
+                return false;
+            }
+        }
+        return true;
+    });
+    // puzzle fails if the timer runs out -> reset the buttons
+    if (kPuzzleStart && kPuzzleCount < 4 && now - kPuzzleStart > KITCHEN_PUZZLE_TIME) {
+        for (const btn of kbuttons) btn.on = false;
+        kPuzzleStart = 0; kPuzzleCount = 0;
+    }
+    if (kPuzzleCount >= 4) startBossFight();
+}
+
+// ===================== BOSS FIGHT (host authoritative) =====================
+function pointInIsland(x, y) {
+    const dx = (x - ISLAND_CX) / ISLAND_RX, dy = (y - ISLAND_CY) / ISLAND_RY;
+    return dx * dx + dy * dy <= 1;
+}
+function clampToIsland(x, y, margin) {
+    const rx = ISLAND_RX - (margin || 0), ry = ISLAND_RY - (margin || 0);
+    const dx = (x - ISLAND_CX) / rx, dy = (y - ISLAND_CY) / ry;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    if (d <= 1) return { x, y, clamped: false };
+    return { x: ISLAND_CX + (dx / d) * rx, y: ISLAND_CY + (dy / d) * ry, clamped: true };
+}
+function keepRoughlyOnIsland(p) {
+    const c = clampToIsland(p.x, p.y, PLAYER_RADIUS);
+    if (c.clamped) { p.x = c.x; p.y = c.y; }
+}
+function randomAlive() {
+    const a = Object.values(players).filter(p => p.alive);
+    return a.length ? a[Math.floor(Math.random() * a.length)] : null;
+}
+function setCenterText(t, ms) { centerText = t; centerTextUntil = Date.now() + ms; }
+
+function startBossFight() {
+    mode = 'boss';
+    boss = { x: (KITCHEN_X1 + KITCHEN_X2) / 2, y: KITCHEN_TOP_Y, phase: 1, dir: 1,
+             rollState: '', rollsLeft: 0, rollUntil: 0, dizzyUntil: 0, lastTrail: 0 };
+    bossHits = 0; bossDizzyHits = 0;
+    pizzas = []; pies = []; bananas = []; cheeses = []; fireTrails = []; warnings = [];
+    bossTimers = { pizzaPie: Date.now(), banana: Date.now(), cheese: Date.now() };
+    bossOutcome = ''; cutsceneUntil = 0; cutsceneLine = '';
+    bossText = 'Shoot the pies to deal damage';
+    setCenterText('You think you can challenge me???', 3500);
+    teleportPlayersToIsland();
+    broadcast(serializeBossState('bossStart'));
+}
+
+function teleportPlayersToIsland() {
+    const list = Object.values(players);
+    const n = Math.max(1, list.length);
+    list.forEach((p, i) => {
+        const ang = (i / n) * Math.PI * 2;
+        p.x = ISLAND_CX + Math.cos(ang) * (ISLAND_RX * 0.45);
+        p.y = ISLAND_CY + Math.sin(ang) * (ISLAND_RY * 0.45);
+        p.lives = MAX_LIVES; p.alive = true; p.invincibleUntil = Date.now() + 2000;
+    });
+}
+
+function speedMul() { return boss.phase === 1 ? 1 : boss.phase === 2 ? 1.3 : 1.6; }
+
+function spawnPizza() {
+    const t = randomAlive(); if (!t) return;
+    const ang = Math.atan2(t.y - boss.y, t.x - boss.x);
+    const sp = 150 * speedMul();
+    pizzas.push({ x: boss.x, y: boss.y + 30, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, speed: sp, targetId: t.id, born: Date.now() });
+}
+function spawnPie() {
+    const t = randomAlive(); if (!t) return;
+    const ang = Math.atan2(t.y - boss.y, t.x - boss.x);
+    const sp = 130 * speedMul();
+    pies.push({ x: boss.x, y: boss.y + 30, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, speed: sp, targetId: t.id, hits: 0, returning: false, born: Date.now() });
+}
+function spawnBanana() {
+    const t = randomAlive(); if (!t) return;
+    const ang = Math.atan2(t.y - boss.y, t.x - boss.x);
+    const sp = 240 * speedMul();
+    bananas.push({ x: boss.x, y: boss.y + 30, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, speed: sp, returning: false, born: Date.now() });
+}
+function spawnCheese() {
+    // 3 warning lines aimed at 3 random players, fire after 0.8s
+    const alive = Object.values(players).filter(p => p.alive);
+    for (let k = 0; k < 3; k++) {
+        const t = alive.length ? alive[Math.floor(Math.random() * alive.length)] : null;
+        const ang = t ? Math.atan2(t.y - boss.y, t.x - boss.x) : Math.random() * Math.PI * 2;
+        warnings.push({ x: boss.x, y: boss.y, angle: ang, fireAt: Date.now() + 800, fired: false });
+    }
+}
+
+function homeToward(proj, tx, ty, turnRate, dt) {
+    const desired = Math.atan2(ty - proj.y, tx - proj.x);
+    let cur = Math.atan2(proj.vy, proj.vx);
+    let diff = ((desired - cur + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+    const step = turnRate * dt;
+    cur += Math.max(-step, Math.min(step, diff));
+    proj.vx = Math.cos(cur) * proj.speed;
+    proj.vy = Math.sin(cur) * proj.speed;
+}
+function damagePlayer(p, now) {
+    if (!p.alive || now < p.invincibleUntil) return;
+    p.lives--; if (p.lives <= 0) p.alive = false; else p.invincibleUntil = now + INVINCIBLE_TIME;
+}
+function offArena(x, y) { return x < -100 || x > ARENA_W + 100 || y < -100 || y > ARENA_H + 100; }
+
+function advanceBoss(dt, now) {
+    // patrol the kitchen in phases 1-3
+    if (boss.phase <= 3) {
+        boss.x += boss.dir * 170 * dt;
+        if (boss.x < KITCHEN_X1) { boss.x = KITCHEN_X1; boss.dir = 1; }
+        if (boss.x > KITCHEN_X2) { boss.x = KITCHEN_X2; boss.dir = -1; }
+        boss.y = KITCHEN_TOP_Y;
+        // attacks
+        if (now - bossTimers.pizzaPie > 5000) {
+            bossTimers.pizzaPie = now;
+            spawnPizza(); spawnPizza(); spawnPizza(); spawnPie();
+        }
+        if (boss.phase >= 2 && now - bossTimers.banana > 4500) { bossTimers.banana = now; spawnBanana(); }
+        if (boss.phase >= 3 && now - bossTimers.cheese > 10000) { bossTimers.cheese = now; spawnCheese(); }
+    } else {
+        // phase 4: rolling
+        if (boss.rollState === 'dizzy') {
+            if (now >= boss.dizzyUntil) { boss.rollState = 'rolling'; boss.rollsLeft = 3; startRoll(now); }
+        } else if (boss.rollState === 'off') {
+            boss.y += 600 * dt; // roll off the island during the win cutscene
+        } else {
+            boss.x += boss.vx * dt; boss.y += boss.vy * dt;
+            if (now - boss.lastTrail > 70) { boss.lastTrail = now; fireTrails.push({ x: boss.x, y: boss.y, until: now + 2000 }); }
+            const c = clampToIsland(boss.x, boss.y, 44);
+            if (c.clamped || now >= boss.rollUntil) {
+                boss.x = c.x; boss.y = c.y;
+                boss.rollsLeft--;
+                if (boss.rollsLeft <= 0) { boss.rollState = 'dizzy'; boss.dizzyUntil = now + 3000; bossDizzyHits = 0; }
+                else startRoll(now);
+            }
+        }
+    }
+}
+function startRoll(now) {
+    const t = randomAlive();
+    const ang = t ? Math.atan2(t.y - boss.y, t.x - boss.x) : Math.random() * Math.PI * 2;
+    boss.vx = Math.cos(ang) * 340; boss.vy = Math.sin(ang) * 340;
+    boss.rollUntil = now + 1100;
+}
+
+function updateBoss(dt, now) {
+    if (bossOutcome) { advanceBoss(dt, now); return; }
+    advanceBoss(dt, now);
+
+    // pizzas (home slowly, hit players)
+    pizzas = pizzas.filter(a => {
+        if (now - a.born > BOSS_PROJ_TTL) return false;
+        const t = players[a.targetId] && players[a.targetId].alive ? players[a.targetId] : randomAlive();
+        if (t) homeToward(a, t.x, t.y, 1.4, dt);
+        a.x += a.vx * dt; a.y += a.vy * dt;
+        for (const p of Object.values(players)) if (circlesOverlap(a.x, a.y, 12, p.x, p.y, PLAYER_RADIUS)) { damagePlayer(p, now); return false; }
+        return !offArena(a.x, a.y);
+    });
+    // pies (home; reflectable; damage boss on return)
+    pies = pies.filter(a => {
+        if (!a.returning && now - a.born > BOSS_PROJ_TTL) return false; // returning pies always fly home
+        if (a.returning) {
+            homeToward(a, boss.x, boss.y, 2.2, dt);
+            a.x += a.vx * dt; a.y += a.vy * dt;
+            if (circlesOverlap(a.x, a.y, 14, boss.x, boss.y, 40)) { hitBossWithPie(now); return false; }
+        } else {
+            const t = players[a.targetId] && players[a.targetId].alive ? players[a.targetId] : randomAlive();
+            if (t) homeToward(a, t.x, t.y, 1.3, dt);
+            a.x += a.vx * dt; a.y += a.vy * dt;
+            for (const p of Object.values(players)) if (circlesOverlap(a.x, a.y, 13, p.x, p.y, PLAYER_RADIUS)) { damagePlayer(p, now); return false; }
+        }
+        return !offArena(a.x, a.y);
+    });
+    // bananas (boomerang)
+    bananas = bananas.filter(a => {
+        if (now - a.born > BOSS_PROJ_TTL) return false;
+        if (!a.returning) {
+            a.x += a.vx * dt; a.y += a.vy * dt;
+            if (Math.hypot(a.x - boss.x, a.y - boss.y) > 900 || offArena(a.x, a.y)) {
+                a.returning = true;
+                const ang = Math.atan2(boss.y - a.y, boss.x - a.x);
+                a.vx = Math.cos(ang) * a.speed; a.vy = Math.sin(ang) * a.speed;
+            }
+        } else {
+            homeToward(a, boss.x, boss.y, 3, dt);
+            a.x += a.vx * dt; a.y += a.vy * dt;
+            if (circlesOverlap(a.x, a.y, 16, boss.x, boss.y, 40)) return false; // returns, no self-damage
+        }
+        for (const p of Object.values(players)) if (circlesOverlap(a.x, a.y, 15, p.x, p.y, PLAYER_RADIUS)) { damagePlayer(p, now); return false; }
+        return !offArena(a.x, a.y);
+    });
+    // warnings -> fire cheese beams
+    warnings = warnings.filter(w => {
+        if (!w.fired && now >= w.fireAt) {
+            w.fired = true;
+            const sp = 620;
+            cheeses.push({ x: boss.x, y: boss.y, vx: Math.cos(w.angle) * sp, vy: Math.sin(w.angle) * sp, lastTrail: 0 });
+            return false;
+        }
+        return !w.fired;
+    });
+    // cheese beams (leave fire trail)
+    cheeses = cheeses.filter(a => {
+        a.x += a.vx * dt; a.y += a.vy * dt;
+        if (now - a.lastTrail > 50) { a.lastTrail = now; fireTrails.push({ x: a.x, y: a.y, until: now + 2000 }); }
+        for (const p of Object.values(players)) if (circlesOverlap(a.x, a.y, 16, p.x, p.y, PLAYER_RADIUS)) damagePlayer(p, now);
+        return !offArena(a.x, a.y);
+    });
+    // fire trails (damage + expire)
+    fireTrails = fireTrails.filter(f => {
+        if (now > f.until) return false;
+        for (const p of Object.values(players)) if (circlesOverlap(f.x, f.y, 22, p.x, p.y, PLAYER_RADIUS)) damagePlayer(p, now);
+        return true;
+    });
+    // phase-4 roll contact
+    if (boss.phase === 4 && boss.rollState === 'rolling') {
+        for (const p of Object.values(players)) if (circlesOverlap(boss.x, boss.y, 40, p.x, p.y, PLAYER_RADIUS)) damagePlayer(p, now);
+    }
+    // players falling off the island
+    for (const p of Object.values(players)) {
+        if (!p.alive) continue;
+        if (!pointInIsland(p.x, p.y) && now > (p.invincibleUntil || 0)) {
+            p.x = ISLAND_CX; p.y = ISLAND_CY;
+            p.lives--; if (p.lives <= 0) p.alive = false; else p.invincibleUntil = now + INVINCIBLE_TIME;
+        }
+    }
+}
+
+function hitBossWithPie(now) {
+    bossHits++;
+    if (bossHits >= HITS_PER_PHASE) {
+        bossHits = 0;
+        if (boss.phase === 1) { boss.phase = 2; }
+        else if (boss.phase === 2) { boss.phase = 3; }
+        else if (boss.phase === 3) { enterPhase4(now); }
+    }
+}
+
+function enterPhase4(now) {
+    boss.phase = 4;
+    boss.x = ISLAND_CX; boss.y = ISLAND_CY;
+    boss.rollState = 'rolling'; boss.rollsLeft = 3;
+    bossHits = 0; bossDizzyHits = 0;
+    bossText = '';
+    pizzas = []; pies = []; bananas = []; cheeses = []; warnings = [];
+    setCenterText("didn't think it'd come down to this", 5000);
+    startRoll(now);
+}
+
+function checkBossCollisions(now) {
+    if (bossOutcome) return;
+    bullets = bullets.filter(b => {
+        // reflect pies
+        for (const pie of pies) {
+            if (!pie.returning && circlesOverlap(b.x, b.y, BULLET_RADIUS, pie.x, pie.y, 15)) {
+                pie.hits = (pie.hits || 0) + 1;
+                if (pie.hits >= PIE_REFLECT_SHOTS) { pie.returning = true; pie.targetId = null; }
+                return false;
+            }
+        }
+        // shoot boss while dizzy (phase 4)
+        if (boss && boss.phase === 4 && boss.rollState === 'dizzy' && bossDizzyHits < PHASE4_HITS_PER_DIZZY
+            && circlesOverlap(b.x, b.y, BULLET_RADIUS, boss.x, boss.y, 44)) {
+            bossDizzyHits++; bossHits++;
+            if (bossHits >= PHASE4_HITS) bossWin(now);
+            return false;
+        }
+        return true;
+    });
+}
+
+function bossWin(now) {
+    if (bossOutcome) return;
+    bossOutcome = 'win';
+    const alive = Object.values(players).filter(p => p.alive);
+    const champ = alive.length ? alive[Math.floor(Math.random() * alive.length)] : Object.values(players)[0];
+    const champName = champ ? champ.name : 'Player';
+    if (champName) addWin(champName);
+    boss.rollState = 'off';
+    const line = champName + ': Yay! we won :)';
+    broadcast({ type: 'bossEnd', outcome: 'win', line, winnerName: champName });
+    showBossOutcome('win', line, champName);
+}
+
+function checkBossEnd() {
+    if (bossOutcome) return;
+    if (Object.values(players).filter(p => p.alive).length === 0) {
+        bossOutcome = 'lose';
+        const line = 'Chef Big Back: I knew you couldn\'t defeat me :)';
+        broadcast({ type: 'bossEnd', outcome: 'lose', line });
+        showBossOutcome('lose', line);
+    }
+}
+
+// shared payload for bossStart / bossState
+function serializeBossState(type) {
+    return {
+        type: type || 'bossState',
+        players: serializePlayers(),
+        bullets: bullets.map(b => ({ id: b.id, x: b.x, y: b.y, vx: b.vx, vy: b.vy, ownerId: b.ownerId })),
+        boss: boss ? { x: boss.x, y: boss.y, phase: boss.phase, rollState: boss.rollState } : null,
+        hits: bossHits,
+        pizzas: pizzas.map(a => ({ x: a.x, y: a.y, vx: a.vx, vy: a.vy })),
+        pies: pies.map(a => ({ x: a.x, y: a.y, vx: a.vx, vy: a.vy, hits: a.hits, returning: a.returning })),
+        bananas: bananas.map(a => ({ x: a.x, y: a.y, vx: a.vx, vy: a.vy, returning: a.returning })),
+        cheeses: cheeses.map(a => ({ x: a.x, y: a.y, vx: a.vx, vy: a.vy })),
+        fires: fireTrails.map(f => ({ x: f.x, y: f.y })),
+        warnings: warnings.map(w => ({ x: w.x, y: w.y, angle: w.angle })),
+        bText: bossText,
+        cText: centerText,
+        cRemain: Math.max(0, centerTextUntil - Date.now()),
+    };
+}
+
+function advanceBossProjectilesLocal(dt) {
+    for (const a of pizzas) { a.x += a.vx * dt; a.y += a.vy * dt; }
+    for (const a of pies) { a.x += a.vx * dt; a.y += a.vy * dt; }
+    for (const a of bananas) { a.x += a.vx * dt; a.y += a.vy * dt; }
+    for (const a of cheeses) { a.x += a.vx * dt; a.y += a.vy * dt; }
+}
+
+function applyBossState(data) {
+    mode = 'boss';
+    if (data.players) {
+        for (const [id, info] of Object.entries(data.players)) {
+            if (!players[id]) players[id] = makePlayer(id, info.name, info.char);
+            if (id === myId) {
+                players[id].lives = info.lives; players[id].alive = info.alive; players[id].invincibleUntil = info.invincibleUntil;
+            } else { Object.assign(players[id], info); }
+        }
+        for (const id of Object.keys(players)) if (!data.players[id]) delete players[id];
+    }
+    if (data.bullets) {
+        const ids = new Set(data.bullets.map(b => b.id));
+        for (const b of data.bullets) {
+            const ex = bullets.find(o => o.id === b.id);
+            if (ex) { ex.x = b.x; ex.y = b.y; ex.vx = b.vx; ex.vy = b.vy; }
+            else bullets.push({ id: b.id, x: b.x, y: b.y, vx: b.vx, vy: b.vy, ownerId: b.ownerId });
+        }
+        bullets = bullets.filter(b => ids.has(b.id));
+    }
+    boss = data.boss; bossHits = data.hits || 0;
+    pizzas = data.pizzas || []; pies = data.pies || []; bananas = data.bananas || [];
+    cheeses = data.cheeses || []; fireTrails = data.fires || []; warnings = data.warnings || [];
+    bossText = data.bText || '';
+    if (data.cText && data.cRemain > 0) { centerText = data.cText; centerTextUntil = Date.now() + data.cRemain; }
+}
+
+function showBossOutcome(outcome, line, winnerName) {
+    // keep mode === 'boss' so the host keeps animating the boss rolling off the island;
+    // bossOutcome freezes player movement and drives the end-screen text.
+    cutsceneLine = line || '';
+    bossOutcome = outcome;
+    setCenterText(outcome === 'win' ? 'VICTORY!' : 'DEFEAT', 5200);
+    if (outcome === 'win' && winnerName && !isHost) addWin(winnerName);
+    setTimeout(returnToMenu, 5200);
+}
+
+function returnToMenu() {
+    mode = 'ffa'; gameActive = false; roundOver = false; boss = null;
+    pizzas = []; pies = []; bananas = []; cheeses = []; fireTrails = []; warnings = [];
+    bossOutcome = ''; centerText = '';
+    kbuttons = []; kPuzzleStart = 0; kPuzzleCount = 0;
+    $('gameScreen').classList.add('hidden');
+    $('roundEnd').classList.add('hidden');
+    $('voteScreen').classList.add('hidden');
+    $('waitingRoom').classList.remove('hidden');
+    $('waitingStatus').textContent = isHost ? 'Press Start for another game!' : 'Waiting for host...';
+}
+
 // ===================== CAMERA =====================
 function updateCamera() {
     if (!canvas) return;
+    if (mode === 'boss' || mode === 'cutscene') {
+        // fixed view that fits the whole arena on screen
+        camScale = Math.min(canvas.width / ARENA_W, canvas.height / ARENA_H);
+        camera.x = -(canvas.width - ARENA_W * camScale) / (2 * camScale);
+        camera.y = -(canvas.height - ARENA_H * camScale) / (2 * camScale);
+        return;
+    }
+    camScale = 1;
     const me = players[myId];
     let target = me;
     if (me && !me.alive) {
@@ -1018,11 +1518,15 @@ function updateCamera() {
     camera.y = Math.max(0, Math.min(Math.max(0, MAP_H - canvas.height), camera.y));
 }
 
+// world -> screen helper (respects camScale)
+function worldToScreen(wx, wy) { return { x: (wx - camera.x) * camScale, y: (wy - camera.y) * camScale }; }
+
 // ===================== RENDER =====================
 function render() {
     if (!ctx || !canvas) return;
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (mode === 'boss' || mode === 'cutscene') { renderBoss(); return; }
     const map = MAPS[currentMapIdx];
 
     ctx.save();
@@ -1058,6 +1562,17 @@ function render() {
             ctx.fillRect(w.x, w.y, w.w, w.h);
         }
         ctx.restore();
+    }
+
+    // Kitchen buttons (red until shot, then green)
+    if (map.kitchen) {
+        for (const btn of kbuttons) {
+            ctx.fillStyle = btn.on ? '#39d353' : '#e23b3b';
+            ctx.strokeStyle = '#000'; ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.arc(btn.x, btn.y, 22, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+            ctx.fillStyle = 'rgba(255,255,255,0.85)';
+            ctx.beginPath(); ctx.arc(btn.x - 6, btn.y - 6, 5, 0, Math.PI * 2); ctx.fill();
+        }
     }
 
     // Bullets (image)
@@ -1194,6 +1709,191 @@ function render() {
         ctx.fillStyle = '#888';
         ctx.fillText(aliveCount + '/' + totalCount + ' alive', canvas.width - 16, canvas.height - 16);
     }
+
+    // Kitchen puzzle HUD
+    if (map.kitchen) {
+        ctx.save();
+        ctx.textAlign = 'center';
+        if (kPuzzleStart && kPuzzleCount < 4) {
+            const left = Math.max(0, Math.ceil((KITCHEN_PUZZLE_TIME - (Date.now() - kPuzzleStart)) / 1000));
+            ctx.font = 'bold 22px monospace'; ctx.fillStyle = '#ffcc00';
+            ctx.fillText('TURN ON THE OTHER BUTTONS ' + kPuzzleCount + '/4', canvas.width / 2, 50);
+            ctx.font = 'bold 18px monospace'; ctx.fillStyle = '#e94560';
+            ctx.fillText(left + 's', canvas.width / 2, 76);
+        } else if (kPuzzleCount < 4) {
+            ctx.font = '16px monospace'; ctx.fillStyle = '#ffcc00';
+            ctx.fillText('Shoot the 4 red buttons...', canvas.width / 2, 50);
+        }
+        ctx.restore();
+    }
+}
+
+// ===================== BOSS RENDER =====================
+function renderBoss() {
+    const now = Date.now();
+    // sky background
+    const g = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    g.addColorStop(0, '#243a6b'); g.addColorStop(1, '#0d1530');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.save();
+    ctx.scale(camScale, camScale);
+    ctx.translate(-camera.x, -camera.y);
+
+    // floating island
+    ctx.fillStyle = '#5a7a3a';
+    ctx.beginPath(); ctx.ellipse(ISLAND_CX, ISLAND_CY, ISLAND_RX, ISLAND_RY, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#6e9447';
+    ctx.beginPath(); ctx.ellipse(ISLAND_CX, ISLAND_CY - 14, ISLAND_RX - 14, ISLAND_RY - 26, 0, 0, Math.PI * 2); ctx.fill();
+    // dirt underside
+    ctx.fillStyle = '#4a3520';
+    ctx.beginPath(); ctx.moveTo(ISLAND_CX - ISLAND_RX + 40, ISLAND_CY + ISLAND_RY - 40);
+    ctx.lineTo(ISLAND_CX, ISLAND_CY + ISLAND_RY + 160);
+    ctx.lineTo(ISLAND_CX + ISLAND_RX - 40, ISLAND_CY + ISLAND_RY - 40); ctx.closePath(); ctx.fill();
+
+    // kitchen platform at top
+    ctx.fillStyle = '#3a2f26'; ctx.fillRect(KITCHEN_X1 - 60, 90, (KITCHEN_X2 - KITCHEN_X1) + 120, 200);
+    ctx.fillStyle = '#524434'; ctx.fillRect(KITCHEN_X1 - 60, 90, (KITCHEN_X2 - KITCHEN_X1) + 120, 26);
+    ctx.fillStyle = '#1d1812'; ctx.fillRect(KITCHEN_X1 - 60, 270, (KITCHEN_X2 - KITCHEN_X1) + 120, 20);
+
+    // fire trails
+    for (const f of fireTrails) {
+        ctx.save();
+        ctx.globalAlpha = 0.55;
+        ctx.fillStyle = '#ff6a1a';
+        ctx.beginPath(); ctx.arc(f.x, f.y, 22, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = 0.9; ctx.fillStyle = '#ffd23a';
+        ctx.beginPath(); ctx.arc(f.x, f.y, 10, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+    }
+    // cheese warning lines (flashing yellow)
+    for (const w of warnings) {
+        if (Math.floor(now / 100) % 2 === 0) continue;
+        ctx.strokeStyle = 'rgba(255,230,60,0.9)'; ctx.lineWidth = 10;
+        ctx.beginPath(); ctx.moveTo(w.x, w.y);
+        ctx.lineTo(w.x + Math.cos(w.angle) * 2400, w.y + Math.sin(w.angle) * 2400); ctx.stroke();
+    }
+
+    const drawImgAt = (img, x, y, size) => {
+        if (img && img.complete && img.naturalWidth) ctx.drawImage(img, x - size / 2, y - size / 2, size, size);
+    };
+
+    // attacks
+    for (const a of cheeses) drawImgAt(bossImg.cheese, a.x, a.y, 40);
+    for (const a of pizzas) drawImgAt(bossImg.pizza, a.x, a.y, 36);
+    for (const a of bananas) drawImgAt(bossImg.banana, a.x, a.y, 40);
+    for (const a of pies) {
+        drawImgAt(bossImg.pie, a.x, a.y, 34);
+        if (!a.returning) {  // show reflect progress
+            ctx.fillStyle = '#fff'; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center';
+            ctx.fillText((a.hits || 0) + '/' + PIE_REFLECT_SHOTS, a.x, a.y - 22);
+        } else {
+            ctx.fillStyle = '#53d769'; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center';
+            ctx.fillText('↩', a.x, a.y - 20);
+        }
+    }
+
+    // boss
+    if (boss) {
+        const img = boss.phase === 1 ? bossImg.phase1 : boss.phase === 2 ? bossImg.phase2
+                  : boss.phase === 3 ? bossImg.phase3 : bossImg.phase4;
+        const size = 130;
+        if (boss.phase === 4 && boss.rollState === 'rolling') {
+            ctx.save(); ctx.translate(boss.x, boss.y); ctx.rotate(now / 90); drawImgAt(img, 0, 0, size); ctx.restore();
+        } else {
+            drawImgAt(img, boss.x, boss.y, size);
+            if (boss.phase === 4 && boss.rollState === 'dizzy') {
+                ctx.fillStyle = '#ffe23a'; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'center';
+                ctx.fillText('★ ★ ★', boss.x, boss.y - size / 2 - 8);
+            }
+        }
+    }
+
+    // players
+    for (const p of Object.values(players)) {
+        if (!p.alive) continue;
+        const inv = now < p.invincibleUntil;
+        if (inv && Math.floor(now / 90) % 2 === 0) continue;
+        const cimg = charImages[p.charIndex];
+        if (cimg && cimg.complete && cimg.naturalWidth) ctx.drawImage(cimg, p.x - DRAW_SIZE / 2, p.y - DRAW_SIZE / 2, DRAW_SIZE, DRAW_SIZE);
+        ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center';
+        ctx.fillStyle = '#fff'; ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.lineWidth = 3;
+        ctx.strokeText(p.name, p.x, p.y - DRAW_SIZE / 2 - 6); ctx.fillText(p.name, p.x, p.y - DRAW_SIZE / 2 - 6);
+    }
+
+    ctx.restore();
+
+    // ---- boss HUD (screen space) ----
+    drawBossHealthBar();
+
+    // local lives
+    const me = players[myId];
+    if (me) {
+        let hearts = '';
+        for (let i = 0; i < MAX_LIVES; i++) hearts += i < me.lives ? '❤️ ' : '🖤 ';
+        $('livesDisplay').textContent = hearts;
+        $('roundDisplay').textContent = 'CHEF BIG BACK';
+    }
+
+    if (bossText) {
+        ctx.save(); ctx.textAlign = 'center'; ctx.font = 'bold 18px monospace';
+        ctx.fillStyle = '#ffd23a';
+        ctx.fillText(bossText, canvas.width / 2, 120);
+        ctx.restore();
+    }
+
+    if (me && !me.alive && mode === 'boss') {
+        ctx.save(); ctx.textAlign = 'center'; ctx.font = 'bold 28px monospace';
+        ctx.fillStyle = 'rgba(233,69,96,0.85)'; ctx.fillText('DOWNED — Spectating', canvas.width / 2, canvas.height - 60);
+        ctx.restore();
+    }
+
+    // center announcement
+    if (centerText && now < centerTextUntil) {
+        ctx.save(); ctx.textAlign = 'center';
+        ctx.font = 'bold 40px monospace';
+        ctx.fillStyle = bossOutcome ? (bossOutcome === 'win' ? '#53d769' : '#e94560') : '#fff';
+        ctx.fillText(centerText, canvas.width / 2, canvas.height / 2 - 10);
+        if (bossOutcome && cutsceneLine) {
+            ctx.font = 'bold 22px monospace'; ctx.fillStyle = '#fff';
+            ctx.fillText(cutsceneLine, canvas.width / 2, canvas.height / 2 + 36);
+        }
+        ctx.restore();
+    }
+}
+
+function drawBossHealthBar() {
+    const bw = Math.min(canvas.width - 80, 760), bh = 26;
+    const bx = (canvas.width - bw) / 2, by = 16;
+    const phase = boss ? boss.phase : 1;
+    // name
+    ctx.save();
+    ctx.textAlign = 'center'; ctx.font = 'bold 20px monospace'; ctx.fillStyle = '#fff';
+    ctx.fillText(phase >= 4 ? BOSS_NAME_FINAL : BOSS_NAME_KITCHEN, canvas.width / 2, by - 2 + bh + 22);
+    // bar background
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(bx - 3, by - 3, bw + 6, bh + 6);
+    ctx.fillStyle = '#3a0d14'; ctx.fillRect(bx, by, bw, bh);
+    // fill
+    let frac;
+    if (phase <= 3) {
+        const completed = phase - 1;
+        const seg = bossHits / HITS_PER_PHASE;
+        frac = (3 - completed - seg) / 3;
+    } else {
+        frac = 1 - bossHits / PHASE4_HITS;
+    }
+    frac = Math.max(0, Math.min(1, frac));
+    ctx.fillStyle = phase >= 4 ? '#b026ff' : '#e23b3b';
+    ctx.fillRect(bx, by, bw * frac, bh);
+    // segment dividers (phases 1-3 only -> divided in 3)
+    if (phase <= 3) {
+        ctx.strokeStyle = '#000'; ctx.lineWidth = 3;
+        for (let i = 1; i < 3; i++) {
+            ctx.beginPath(); ctx.moveTo(bx + bw * i / 3, by); ctx.lineTo(bx + bw * i / 3, by + bh); ctx.stroke();
+        }
+    }
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.strokeRect(bx, by, bw, bh);
+    ctx.restore();
 }
 
 // ===================== GAME LOOP =====================
