@@ -1094,12 +1094,13 @@ function update(dt) {
 
 function updateBullets(dt) {
     const now = Date.now();
-    const walls = MAPS[currentMapIdx].walls;
+    const inBoss = mode === 'boss';
+    const walls = (!inBoss && currentMapIdx >= 0) ? MAPS[currentMapIdx].walls : [];
     bullets = bullets.filter(b => {
         b.x += b.vx * dt; b.y += b.vy * dt;
         if (now - b.born > BULLET_TTL) return false;           // self-destruct so bullets never pile up
         if (b.x < 0 || b.x > MAP_W || b.y < 0 || b.y > MAP_H) return false;
-        if (!wallsBroken) {
+        if (!inBoss && !wallsBroken) {                         // no walls in the boss arena
             for (const w of walls) {
                 if (b.x > w.x && b.x < w.x + w.w && b.y > w.y && b.y < w.y + w.h) return false;
             }
@@ -1825,6 +1826,16 @@ function renderBoss() {
     const drawImgAt = (img, x, y, size) => {
         if (img && img.complete && img.naturalWidth) ctx.drawImage(img, x - size / 2, y - size / 2, size, size);
     };
+
+    // player bullets
+    for (const b of bullets) {
+        if (bulletImg && bulletImg.complete && bulletImg.naturalWidth) {
+            ctx.drawImage(bulletImg, b.x - BULLET_DRAW / 2, b.y - BULLET_DRAW / 2, BULLET_DRAW, BULLET_DRAW);
+        } else {
+            ctx.beginPath(); ctx.arc(b.x, b.y, BULLET_RADIUS, 0, Math.PI * 2);
+            ctx.fillStyle = '#FFD700'; ctx.fill();
+        }
+    }
 
     // attacks
     for (const a of cheeses) drawImgAt(bossImg.cheese, a.x, a.y, 40);
